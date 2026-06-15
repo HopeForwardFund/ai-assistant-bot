@@ -1,147 +1,104 @@
 import logging
 import os
 import httpx
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
-
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, PreCheckoutQueryHandler, filters, ContextTypes
+ 
 TOKEN = "8787766144:AAGSvn5zSVotJluruT2iCNTzTlidfwr9jWk"
-USDT_WALLET = "0x50E668eD4bb31F785404304E858205d0B93a4De3"
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-
+ 
 logging.basicConfig(level=logging.INFO)
-
-# Free trial messages
+ 
 FREE_LIMIT = 5
-
-# Store user data in memory
 user_data = {}
-
-def get_user(user_id):
-    if user_id not in user_data:
-        user_data[user_id] = {
-            "messages": 0,
-            "subscribed": False,
-            "lang": "en"
-        }
-    return user_data[user_id]
-
+ 
 PLANS = {
-    "basic": {"name": "Basic", "price": 5, "messages": 200},
-    "pro": {"name": "Pro", "price": 10, "messages": 1000},
-    "unlimited": {"name": "Unlimited", "price": 20, "messages": 999999}
+    "basic": {"name": "Basic", "stars": 250, "messages": 200},
+    "pro": {"name": "Pro", "stars": 500, "messages": 1000},
+    "unlimited": {"name": "Unlimited", "stars": 1000, "messages": 999999}
 }
-
+ 
 TEXTS = {
     "en": {
         "welcome": """🤖 *Welcome to AI Assistant Pro!*
-
-I'm your personal AI assistant powered by advanced AI.
-
+ 
+Your personal AI assistant powered by advanced AI.
+ 
 ✨ *What I can do:*
 • 💬 Answer any question
 • 📝 Write texts, posts, essays
-• 🌍 Translate to any language  
+• 🌍 Translate to any language
 • 💡 Generate ideas & strategies
 • 📊 Analyze and summarize
-• 🎯 Help with business & marketing
-
+ 
 🎁 *You get 5 FREE messages to try!*
-
-Just send me any message to start! 👇""",
+ 
+Just send me any message! 👇""",
         "trial_left": "🎁 Free messages left: {}",
-        "trial_over": """⚠️ *Your free trial is over!*
-
-You've used all 5 free messages.
-
-💎 *Choose a subscription plan to continue:*""",
+        "trial_over": "⚠️ *Free trial is over!*\n\nChoose a subscription plan:",
         "plans": """💎 *Choose your plan:*
-
-🥉 *Basic — $5/month*
-• 200 messages per month
-• All AI features
-
-🥈 *Pro — $10/month*  
-• 1,000 messages per month
-• Priority responses
-
-🥇 *Unlimited — $20/month*
-• Unlimited messages
-• Fastest responses
-• VIP support""",
-        "payment": """💳 *Payment Instructions*
-
-Plan: *{plan}* — *${price}/month*
-
-Send USDT to this address:
-`{wallet}`
-
-🌐 Network: ERC20 (Ethereum)
-
-After payment, send me the transaction ID and I'll activate your subscription! ✅""",
+ 
+🥉 *Basic — 250 ⭐*
+• 200 messages/month
+ 
+🥈 *Pro — 500 ⭐*
+• 1,000 messages/month
+ 
+🥇 *Unlimited — 1000 ⭐*
+• Unlimited messages""",
         "thinking": "🤔 Thinking...",
-        "error": "❌ Something went wrong. Please try again.",
-        "subscribed": "✅ You have an active subscription!",
-        "send_tx": "After sending USDT, send me your transaction ID here to activate subscription.",
-        "activated": "🎉 Your subscription has been activated! Enjoy unlimited AI assistance!",
+        "error": "❌ Something went wrong. Try again.",
+        "activated": "🎉 Subscription activated! Enjoy AI assistance!",
+        "paying": "💫 Processing payment...",
     },
     "ru": {
         "welcome": """🤖 *Добро пожаловать в AI Assistant Pro!*
-
-Я ваш персональный ИИ-ассистент на базе передового ИИ.
-
+ 
+Ваш персональный ИИ-ассистент.
+ 
 ✨ *Что я умею:*
 • 💬 Отвечать на любые вопросы
-• 📝 Писать тексты, посты, эссе
+• 📝 Писать тексты и посты
 • 🌍 Переводить на любой язык
-• 💡 Генерировать идеи и стратегии
-• 📊 Анализировать и резюмировать
-• 🎯 Помогать с бизнесом и маркетингом
-
-🎁 *Вы получаете 5 БЕСПЛАТНЫХ сообщений для пробы!*
-
-Просто отправьте мне любое сообщение! 👇""",
-        "trial_left": "🎁 Бесплатных сообщений осталось: {}",
-        "trial_over": """⚠️ *Бесплатный период закончился!*
-
-Вы использовали все 5 бесплатных сообщений.
-
-💎 *Выберите план подписки:*""",
+• 💡 Генерировать идеи
+• 📊 Анализировать информацию
+ 
+🎁 *5 БЕСПЛАТНЫХ сообщений для пробы!*
+ 
+Просто напишите мне! 👇""",
+        "trial_left": "🎁 Бесплатных сообщений: {}",
+        "trial_over": "⚠️ *Бесплатный период закончился!*\n\nВыберите план подписки:",
         "plans": """💎 *Выберите план:*
-
-🥉 *Basic — $5/месяц*
-• 200 сообщений в месяц
-• Все функции ИИ
-
-🥈 *Pro — $10/месяц*
-• 1,000 сообщений в месяц
-• Приоритетные ответы
-
-🥇 *Unlimited — $20/месяц*
-• Безлимитные сообщения
-• Самые быстрые ответы
-• VIP поддержка""",
-        "payment": """💳 *Инструкция по оплате*
-
-План: *{plan}* — *${price}/месяц*
-
-Отправьте USDT на этот адрес:
-`{wallet}`
-
-🌐 Сеть: ERC20 (Ethereum)
-
-После оплаты отправьте мне ID транзакции и я активирую подписку! ✅""",
+ 
+🥉 *Basic — 250 ⭐*
+• 200 сообщений/месяц
+ 
+🥈 *Pro — 500 ⭐*
+• 1,000 сообщений/месяц
+ 
+🥇 *Unlimited — 1000 ⭐*
+• Безлимитные сообщения""",
         "thinking": "🤔 Думаю...",
         "error": "❌ Что-то пошло не так. Попробуйте снова.",
-        "subscribed": "✅ У вас активная подписка!",
-        "send_tx": "После отправки USDT, пришлите мне ID транзакции для активации подписки.",
-        "activated": "🎉 Ваша подписка активирована! Пользуйтесь ИИ без ограничений!",
+        "activated": "🎉 Подписка активирована! Пользуйтесь ИИ без ограничений!",
+        "paying": "💫 Обрабатываю платёж...",
     }
 }
-
+ 
+user_langs = {}
+user_states = {}
+ 
+def get_lang(user_id):
+    return user_langs.get(user_id, 'en')
+ 
+def get_user(user_id):
+    if user_id not in user_data:
+        user_data[user_id] = {"messages": 0, "subscribed": False}
+    return user_data[user_id]
+ 
 async def ask_claude(message: str) -> str:
     if not ANTHROPIC_API_KEY:
-        return "AI service is not configured yet. Please contact support."
-    
+        return "⚠️ AI service not configured yet. Please contact support."
     async with httpx.AsyncClient() as client:
         response = await client.post(
             "https://api.anthropic.com/v1/messages",
@@ -159,141 +116,141 @@ async def ask_claude(message: str) -> str:
         )
         data = response.json()
         return data["content"][0]["text"]
-
+ 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    user = get_user(user_id)
-    lang = user["lang"]
-    t = TEXTS[lang]
-    
     keyboard = [
         [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en"),
          InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
-        [InlineKeyboardButton("💎 Subscribe", callback_data="plans"),
+        [InlineKeyboardButton("💎 Subscribe with ⭐", callback_data="plans"),
          InlineKeyboardButton("💬 Start Chat", callback_data="chat")]
     ]
+    lang = get_lang(user_id)
     await update.message.reply_text(
-        t["welcome"],
+        TEXTS[lang]["welcome"],
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-
+ 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    user = get_user(user_id)
     data = query.data
-
+ 
     if data.startswith("lang_"):
         lang = data.split("_")[1]
-        user["lang"] = lang
-        t = TEXTS[lang]
+        user_langs[user_id] = lang
         keyboard = [
-            [InlineKeyboardButton("💎 Subscribe", callback_data="plans"),
+            [InlineKeyboardButton("💎 Subscribe with ⭐", callback_data="plans"),
              InlineKeyboardButton("💬 Start Chat", callback_data="chat")]
         ]
-        await query.message.reply_text(t["welcome"], parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-
-    elif data == "plans" or data == "subscribe":
-        lang = user["lang"]
-        t = TEXTS[lang]
+        await query.message.reply_text(
+            TEXTS[lang]["welcome"],
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+ 
+    elif data == "plans":
+        lang = get_lang(user_id)
         keyboard = [
-            [InlineKeyboardButton("🥉 Basic — $5/mo", callback_data="pay_basic")],
-            [InlineKeyboardButton("🥈 Pro — $10/mo", callback_data="pay_pro")],
-            [InlineKeyboardButton("🥇 Unlimited — $20/mo", callback_data="pay_unlimited")]
+            [InlineKeyboardButton("🥉 Basic — 250 ⭐", callback_data="buy_basic")],
+            [InlineKeyboardButton("🥈 Pro — 500 ⭐", callback_data="buy_pro")],
+            [InlineKeyboardButton("🥇 Unlimited — 1000 ⭐", callback_data="buy_unlimited")]
         ]
-        await query.message.reply_text(t["plans"], parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-
-    elif data.startswith("pay_"):
+        await query.message.reply_text(
+            TEXTS[lang]["plans"],
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+ 
+    elif data.startswith("buy_"):
         plan_key = data.split("_")[1]
         plan = PLANS[plan_key]
-        lang = user["lang"]
-        t = TEXTS[lang]
-        text = t["payment"].format(
-            plan=plan["name"],
-            price=plan["price"],
-            wallet=USDT_WALLET
+        lang = get_lang(user_id)
+        # Send Stars invoice
+        await context.bot.send_invoice(
+            chat_id=user_id,
+            title=f"AI Assistant Pro — {plan['name']}",
+            description=f"{plan['messages']} messages per month",
+            payload=f"sub_{plan_key}",
+            currency="XTR",
+            prices=[LabeledPrice(label=plan["name"], amount=plan["stars"])]
         )
-        keyboard = [[InlineKeyboardButton("✅ I've paid", callback_data=f"paid_{plan_key}")]]
-        await query.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-
-    elif data.startswith("paid_"):
-        lang = user["lang"]
-        t = TEXTS[lang]
-        user["waiting_tx"] = data.split("_")[1]
-        await query.message.reply_text(t["send_tx"])
-
+ 
     elif data == "chat":
-        lang = user["lang"]
-        t = TEXTS[lang]
+        lang = get_lang(user_id)
+        user = get_user(user_id)
         left = FREE_LIMIT - user["messages"]
         if user["subscribed"]:
-            await query.message.reply_text("✅ Send me any message and I'll answer!")
+            await query.message.reply_text("✅ Send me any message!")
         elif left > 0:
-            await query.message.reply_text(f"{t['trial_left'].format(left)}\n\nSend me any message! 👇")
+            await query.message.reply_text(f"{TEXTS[lang]['trial_left'].format(left)}\n\nSend me any message! 👇")
         else:
-            keyboard = [[InlineKeyboardButton("💎 Subscribe Now", callback_data="plans")]]
-            await query.message.reply_text(t["trial_over"], parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-
+            keyboard = [[InlineKeyboardButton("💎 Subscribe with ⭐", callback_data="plans")]]
+            await query.message.reply_text(
+                TEXTS[lang]["trial_over"],
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+ 
+async def precheckout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.pre_checkout_query.answer(ok=True)
+ 
+async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang = get_lang(user_id)
+    user = get_user(user_id)
+    user["subscribed"] = True
+    await update.message.reply_text(TEXTS[lang]["activated"])
+ 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    lang = get_lang(user_id)
     user = get_user(user_id)
-    lang = user["lang"]
-    t = TEXTS[lang]
     text = update.message.text
-
-    # Check if waiting for transaction ID
-    if user.get("waiting_tx"):
-        plan_key = user.pop("waiting_tx")
-        plan = PLANS[plan_key]
-        user["subscribed"] = True
-        user["plan"] = plan_key
-        await update.message.reply_text(t["activated"])
-        return
-
-    # Check limits
+ 
     if not user["subscribed"] and user["messages"] >= FREE_LIMIT:
-        keyboard = [[InlineKeyboardButton("💎 Subscribe Now", callback_data="plans")]]
-        await update.message.reply_text(t["trial_over"], parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        keyboard = [[InlineKeyboardButton("💎 Subscribe with ⭐", callback_data="plans")]]
+        await update.message.reply_text(
+            TEXTS[lang]["trial_over"],
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         return
-
-    # Send thinking message
-    thinking_msg = await update.message.reply_text(t["thinking"])
-
+ 
+    thinking = await update.message.reply_text(TEXTS[lang]["thinking"])
     try:
         response = await ask_claude(text)
         user["messages"] += 1
-        
-        # Add trial counter for free users
         extra = ""
         if not user["subscribed"]:
             left = FREE_LIMIT - user["messages"]
             if left > 0:
-                extra = f"\n\n🎁 {t['trial_left'].format(left)}"
+                extra = f"\n\n🎁 {TEXTS[lang]['trial_left'].format(left)}"
             else:
-                extra = "\n\n⚠️ This was your last free message! Subscribe to continue."
-
-        await thinking_msg.edit_text(response + extra)
-        
-        # Show subscribe button when trial ends
+                extra = "\n\n⚠️ Last free message! Subscribe to continue ⭐"
+        await thinking.edit_text(response + extra)
+ 
         if not user["subscribed"] and user["messages"] >= FREE_LIMIT:
-            keyboard = [[InlineKeyboardButton("💎 Subscribe Now", callback_data="plans")]]
+            keyboard = [[InlineKeyboardButton("💎 Subscribe with ⭐", callback_data="plans")]]
             await update.message.reply_text(
-                t["trial_over"],
+                TEXTS[lang]["trial_over"],
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
     except Exception as e:
-        await thinking_msg.edit_text(t["error"])
-
+        await thinking.edit_text(TEXTS[lang]["error"])
+ 
 def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
+    app.add_handler(PreCheckoutQueryHandler(precheckout))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("✅ AI Assistant Pro Bot is running!")
+    print("✅ AI Assistant Pro with Stars payments running!")
     app.run_polling()
-
+ 
 if __name__ == "__main__":
     main()
